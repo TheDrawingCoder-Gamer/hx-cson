@@ -1,5 +1,6 @@
 package cson;
 
+import haxe.PosInfos;
 import haxe.Json;
 using StringTools;
 typedef NodeVisitor = (Any, Dynamic) -> String;
@@ -29,7 +30,7 @@ class Cson {
 
         final normalized = Json.parse(Json.stringify(value));
 
-        return visitNode(normalized, null, indent);
+        return visitNode(normalized, null, goodIndent);
         
     }
     static final jsIdRE = ~/^[a-z_$][a-z0-9_$]*$/i;
@@ -40,7 +41,6 @@ class Cson {
     }
     static function parseIndent(indent:Any):String {
         // unions aren't working, time for action
-
         if ((indent is Int)) {
             var oop:Int = cast indent;
             final n = Math.max(0, Math.min(10, Math.floor(oop)));
@@ -52,15 +52,19 @@ class Cson {
         return "";
     }
     static function indentLine(indent:String ,line:String):String {
-        return indent + line;
+        return safeTrace(indent + line);
     }
     static function indentLines(indent:String, str:String):String {
         if (str == '')
             return str;
-        return str.split('\n').map(indentLine.bind(_, indent)).join('\n');
+        return str.split('\n').map(indentLine.bind(indent, _)).join('\n');
+    }
+    static function safeTrace<T>(thing:T):T {
+        trace(thing);
+        return thing;
     }
     static function singleQuoteStringify(str) {
-        return "'" + Json.stringify(str).substring(1, -1).replace("\\\"", "\"").replace("'", "\\'");
+		return "'" + Json.stringify(str).substring(1, Json.stringify(str).length - 1).replace('\\"', '"').replace("'", "\\'") + "'";
     }
     static function quoteType(str:String) {
         return str.contains("'") && !str.contains('"') ? 'double' : 'single';
@@ -75,12 +79,12 @@ class Cson {
                 key = onelineStringify(key);
             }
             var serializedValue = visitNode(value, {
-                bracesRequired: !(indent != '')
+                bracesRequired: indent == ''
             }, indent);
             if (indent != '') {
-                serializedValue = Reflect.isObject(value) && Reflect.fields(value).length >  0 ? '\n${indentLines(indent, serializedValue)}' : ' ${serializedValue}';
+                serializedValue = Type.typeof(value) == TObject && Reflect.fields(value).length >  0 ? '\n${indentLines(indent, serializedValue)}' : ' ${serializedValue}';
             }
-            return '${key}:${serializedValue}';
+            return safeTrace('${key}:${serializedValue}');
         });
     }
     static function visitArray(indent:String, arr:Array<Dynamic>) {
@@ -95,7 +99,7 @@ class Cson {
     static function visitObject(indent:String, obj:Dynamic, arg:NodeOptions):String {
         final bracesReq = arg.bracesRequired;
         final keyPairs = buildKeyPairs(indent, obj);
-
+        trace(keyPairs);
         if (keyPairs.length == 0) return '{}';
         if (indent != '') {
             final keyPairsLines = keyPairs.join('\n');
@@ -114,32 +118,26 @@ class Cson {
             return onelineStringify(str);
         }
         final string = str.replace('\\', '\\\\').replace("''", "\\''");
-        return "'''" + newlineWrap(indentLines(indent, string)) + "'''";
+        return "'''" + newlineWrap(indentLines(indent, string)) + indent + "'''";
     }
     static function visitNode(node:Dynamic, ?options:NodeOptions, indent:String):String {
         if (options == null) {
             options = {};
         }
-        if ((node is Bool)) {
-            // i don't trust haxe's Std.string :| 
-            return node ? 'true' : 'false';
-        // bro :neutral_face:
-        } else if ((node is Int) || (node is Float)) {
-            var floaty:Float = cast node;
-            if (Math.isFinite(floaty)) {
-                return Std.string(floaty);
-            } 
-            return 'null';
-         } else if ((node is String)) {
-             return visitString(indent, node);
-         } else if (node == null) {
-             return 'null';
-        } else if (Reflect.isObject(node)) {
-            return visitObject(indent, node, options);
-        } else if ((node is Array)) {
-            return visitArray(indent, node);
-        }
-        trace(node); 
-        throw 'Unsure of how to convert type ${Type.typeof(node)}';
+        trace(indent.length);
+		return switch Type.typeof(node) {
+			case TNull: "null";
+			case TInt: Std.string(node);
+			case TFloat: Std.string(node);
+			case TBool: (node : Bool) ? "true" : "false";
+			case TObject:
+				visitObject(indent, node, options);
+			case TFunction: throw "NO FUNCTIONS";
+			case TClass(c):
+				if (c == String) visitString(indent, node) else if (c == Array) visitArray(indent, node) else throw "NO CLASSES";
+			case TEnum(e): throw "NO ENUMS";
+			case TUnknown: return '"???"';
+            default: throw "oop-";
+		}
     }
 }
