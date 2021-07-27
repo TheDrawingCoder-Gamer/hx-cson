@@ -1,0 +1,14 @@
+{
+  "name": "hx_cson",
+  "url" : "https://github.com/jasononeil/useless/",
+  "license": "MIT",
+  "tags": ["cson"],
+  "description": "CSON support, ported from javascript",
+  "version": "1.0.0",
+  "classPath": "src/",
+  "releasenote": "Initial release, everything is working correctly.",
+  "contributors": ["BulbyVR"],
+  "dependencies": {
+    
+  }
+}
