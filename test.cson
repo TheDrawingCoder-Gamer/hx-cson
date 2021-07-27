@@ -1,4 +1,4 @@
-# Comments!!!
+#### Comments!!! ###
 
 # An Array with no commas!
 greatDocumentaries: [
@@ -6,7 +6,12 @@ greatDocumentaries: [
 	'forksoverknives.com'
 	'cowspiracy.com'
 ]
-
+###
+multi line comments lol
+#
+#
+#
+###
 # An Object without braces!
 importantFacts:
 	# Multi-Line Strings! Without Quote Escaping!

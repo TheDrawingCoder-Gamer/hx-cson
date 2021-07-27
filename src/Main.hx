@@ -7,5 +7,7 @@ class Main {
         var json = Json.parse(File.getContent('test.json'));
 
         File.saveContent('output.cson', Cson.stringify(json, null, 4));
+
+        trace(CsonParser.parse(File.getContent('output.cson')));
     }
 }
