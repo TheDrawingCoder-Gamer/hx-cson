@@ -8,6 +8,10 @@ class Main {
 
         File.saveContent('output.cson', Cson.stringify(json, null, 4));
 
-        trace(CsonParser.parse(File.getContent('output.cson')));
+        // File.saveContent('output.json', Json.stringify(Cson.parse(File.getContent('test.cson'))));
+        var tokens = Cson.tokenize(File.getContent('test.cson'));
+        for (token in tokens) {
+            trace(token);
+        }
     }
 }

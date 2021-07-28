@@ -3,22 +3,28 @@ package cson;
 import haxe.PosInfos;
 import haxe.Json;
 using StringTools;
+using cson.CoolString;
 typedef NodeVisitor = (Any, Dynamic) -> String;
 typedef NodeOptions = {
     var ?bracesRequired:Bool;
 }
-abstract Number(Float) from Float to Float {
-    inline function new(i:Float) {
-        this = i;
-    }
-    @:from
-    static public function fromInt(s:Int) {
-        return new Number(s);
-    }
-    @:to 
-    public function toInt() {
-        return Std.int(this);
-    }
+// Comments don't have tokens because... C'mon :hueh:
+enum Tokens {
+	// Indent, in terms of cson, is equivilant to {
+	Indent;
+	// Dedent in terms of cson == }
+	Dedent;
+	Identifier(content:String);
+	// ]
+	RBrace;
+	// [
+	LBrace;
+	NewLine;
+	Colon;
+	TString(content:String);
+	TNumber(value:Float, int:Bool);
+    TBool(value:Bool);
+    TNull;
 }
 
 class Cson {
@@ -52,7 +58,7 @@ class Cson {
         return "";
     }
     static function indentLine(indent:String ,line:String):String {
-        return safeTrace(indent + line);
+        return indent + line;
     }
     static function indentLines(indent:String, str:String):String {
         if (str == '')
@@ -84,7 +90,7 @@ class Cson {
             if (indent != '') {
                 serializedValue = Type.typeof(value) == TObject && Reflect.fields(value).length >  0 ? '\n${indentLines(indent, serializedValue)}' : ' ${serializedValue}';
             }
-            return safeTrace('${key}:${serializedValue}');
+            return '${key}:${serializedValue}';
         });
     }
     static function visitArray(indent:String, arr:Array<Dynamic>) {
@@ -99,7 +105,6 @@ class Cson {
     static function visitObject(indent:String, obj:Dynamic, arg:NodeOptions):String {
         final bracesReq = arg.bracesRequired;
         final keyPairs = buildKeyPairs(indent, obj);
-        trace(keyPairs);
         if (keyPairs.length == 0) return '{}';
         if (indent != '') {
             final keyPairsLines = keyPairs.join('\n');
@@ -124,7 +129,6 @@ class Cson {
         if (options == null) {
             options = {};
         }
-        trace(indent.length);
 		return switch Type.typeof(node) {
 			case TNull: "null";
 			case TInt: Std.string(node);
@@ -140,531 +144,407 @@ class Cson {
             default: throw "oop-";
 		}
     }
-}
-// This is based (lol) off the code of Haxe.json
-class CsonParser {
-	/**
-		Parses given JSON-encoded `str` and returns the resulting object.
-		JSON objects are parsed into anonymous structures and JSON arrays
-		are parsed into `Array<Dynamic>`.
-		If given `str` is not valid JSON, an exception will be thrown.
-		If `str` is null, the result is unspecified.
-	**/
-	static public inline function parse(str:String):Dynamic {
-		return new CsonParser(str).doParse();
-	}
-
-	var str:String;
-	var pos:Int;
-    var fileIndent:Int = 0;
-	function new(str:String) {
-		this.str = str;
-		this.pos = 0;
-	}
-
-	function doParse():Dynamic {
-		var result = parseRec();
-		var c;
-		while (!StringTools.isEof(c = nextChar())) {
-			switch (c) {
-				case ' '.code, '\r'.code, '\n'.code, '\t'.code:
-				// allow trailing whitespace
-				default:
-					invalidChar();
-			}
-		}
-		return result;
-	}
-    function parseObj():Dynamic {
-        parsedAnythingYet = true;
-		var obj = {}, field = null, comma:Null<Bool> = null;
-		var quoteCount = 0;
-		while (true) {
-			var c = nextChar();
-			if (c != "'".code)
-				quoteCount = 0;
-
-			switch (c) {
-				case ' '.code, '\r'.code, '\n'.code, '\t'.code:
-				// loop
-				case '}'.code:
-					if (field != null || comma == false)
-						invalidChar();
-					return obj;
-				case ':'.code:
-					if (field == null)
-						invalidChar();
-					Reflect.setField(obj, field, parseRec());
-					field = null;
-					comma = true;
-				case ','.code:
-					if (comma)
-						comma = false
-					else
-						invalidChar();
-				case '"'.code:
-					if (field != null || comma)
-						invalidChar();
-					field = parseString();
-				case "'".code:
-					quoteCount++;
-					if (quoteCount > 1) {
-						invalidChar();
-					}
-				default:
-					// invalidChar();
-					// probably an indentifier?
-					if (quoteCount != 0) {
-						if (quoteCount == 1) {
-							field = parseString(true);
-							continue;
-						}
-					}
-					field = parseIdentifier();
-			}
-		}
-    }
-    var parsedAnythingYet = false;
-	function parseRec():Dynamic {
-        var commentCount = 0;
-        var allQuote = 0;
-		while (true) {
-			var c = nextChar();
-            
-			switch (c) {
-				    
-                    
-				case '{'.code:
-					return parseObj();
-				case '['.code:
-					var arr = [], comma:Null<Bool> = null;
-					while (true) {
-						var c = nextChar();
-						switch (c) {
-							case ' '.code, '\r'.code, '\t'.code:
-							// loop
-							case ']'.code:
-                                // I doubt coffeescript is strict about commas
-								//if (comma == false)
-								//	invalidChar();
-								return arr;
-                            // newline is considered a seperator in cson
-							case ','.code, '\n'.code:
-								if (comma) comma = false else invalidChar();
-							default:
-								if (comma)
-									invalidChar();
-								pos--;
-								arr.push(parseRec());
-								comma = true;
-						}
-					}
-				case 't'.code:
-					var save = pos;
-					if (nextChar() != 'r'.code || nextChar() != 'u'.code || nextChar() != 'e'.code) {
-						pos = save;
-						if (commentCount != 0) {
-							handleComment(commentCount);
-							continue;
-						}
-						if (allQuote == 0)
-							invalidChar();
-						else
-							return handleQuote(allQuote);
-					}
-					parsedAnythingYet = true;
-					return true;
-				case 'f'.code:
-					var save = pos;
-					if (nextChar() != 'a'.code || nextChar() != 'l'.code || nextChar() != 's'.code || nextChar() != 'e'.code) {
-						pos = save;
-						if (commentCount != 0) {
-							handleComment(commentCount);
-							continue;
-						}
-						if (allQuote == 0)
-							invalidChar();
-						else
-							return handleQuote(allQuote);
-					}
-					parsedAnythingYet = true;
-					return false;
-				case 'n'.code:
-					var save = pos;
-					if (nextChar() != 'u'.code || nextChar() != 'l'.code || nextChar() != 'l'.code) {
-						pos = save;
-                        if (commentCount != 0) {
-							handleComment(commentCount);
-                            continue;
+	// tokens : )
+	public static function tokenize(str:String) {
+		// only one indent token will be parsed on each line maximum. 
+		// see: https://riptutorial.com/python/example/8674/how-indentation-is-parsed
+		// tabs and spaces can be mixed but c'mon
+		// :neutral_face:
+		var lines = str.split('\n');
+		// i only know how to parse stuff line by line : )
+		var firstLine = true;
+		var inMultilineComment = false;
+        var inMultilineString = false;
+        
+		var tokens:Array<Tokens> = [];
+        var validCharRegex = ~/[\w'"]/;
+		var idRegex = ~/['"]?\w+['"]?/;
+		var multicommentRegex = ~/#{3,6}.+?#{3,6}/g;
+        var stringWithHash = ~/['"].*#.*['"]/g;
+		var lineWithIgnoredComment = ~/(?:^.*#.*?)['"].*['"]/;
+		// Amount of whitespace last line
+		var arrayLevels = 0;
+		var previousWS = 0;
+		var thisWS = 0;
+        var preferredWS = 0;
+        var inArray = false;
+        var technicallyInArray = false;
+        var multiString = "";
+		for (line in lines) {
+            var justExitedMulti = false;
+			thisWS = 0;
+            // multiline strings ignore comments dumbass
+            if (!inMultilineString) {
+				if (line.contains('#') && !line.contains('###')) {
+					// means this is a full line comment,
+					// also means this doesn't become the first line, making object management easier
+					if (line.ltrim().charAt(0) == '#') {
+						continue;
+						// it comments every thing after it
+					} else {
+                        if (line.count("'") > 0 || line.count('"') > 0) {
+                            // oop
+                            // we better check if it's in the string
+                            // first lets make sure we aren't starting a multiline string which rules out all comments
+                            if (~/'''/.match(line) && !~/#.*'''/.match(line)) {
+                            // now if we match a line with a # in a string and it isn't commented out
+                            } else if (stringWithHash.match(line) && !lineWithIgnoredComment.match(line)) {
+                                // here we have to check the amount of them. 
+                                if (line.count("#") > 1) {
+                                    // We'll have to do some precision here. 
+                                    var splitLine = line.split("");
+                                    var pos = 0;
+                                    var inString = false;
+                                    var stringType = 'none';
+                                    while (pos < splitLine.length) {
+                                        var curChar = splitLine[pos++];
+                                        switch (curChar) {
+                                            case '\\':
+                                                curChar = splitLine[pos++];
+                                                switch (curChar) {
+                                                    case '"' | "'":
+                                                        if (inString)
+                                                            continue;
+                                                }
+                                            case '"':
+                                                if (stringType == 'double' || stringType == 'none') {
+													inString = !inString;
+													if (inString)
+														stringType = 'double';
+                                                    else 
+                                                        stringType = 'none';
+                                                }
+                                                
+                                            case "'":
+												if (stringType == 'single' || stringType == 'none') {
+													inString = !inString;
+													if (inString)
+														stringType = 'single';
+													else
+														stringType = 'none';
+												}
+                                            case "#": 
+                                                if (!inString) {
+                                                    // OOP
+                                                    // rewind
+                                                    pos--;
+                                                    break;
+                                                }
+                                        }
+                                    }
+                                    if (pos < splitLine.length) {
+                                        // We ingore the line after the hash. 
+										line = line.substr(0, pos);
+                                    }
+                                }
+                                // If that was false then we know it is a string like normal. 
+							// Otherwise, it's probably fine, and we'll ignore it like normal.
+                            } else {
+								var pos = line.indexOf('#');
+								line = line.substr(0, pos);
+                            }
                         }
-                            
-                        
-                            
-						if (allQuote == 0)
-							invalidChar();
-						else 
-							return handleQuote(allQuote);
+						
 					}
-					parsedAnythingYet = true;
-					return null;
-				case '"'.code:
-					return parseString();
-                case "'".code:
-                    allQuote++;
-				case '0'.code, '1'.code, '2'.code, '3'.code, '4'.code, '5'.code, '6'.code, '7'.code, '8'.code, '9'.code, '-'.code:
-					return parseNumber(c);
-                case '#'.code:
-                    commentCount++;
-                    if (commentCount == 3) {
-                        handleComment(3);
-                    }
-				default:
-					trace(allQuote);
-                    if (allQuote != 0)
-                        return handleQuote(allQuote);
-                    if (commentCount != 0) {
-                        handleComment(commentCount);
-                        continue;
-                    }
-					if (c == ' '.code || c == '\r'.code || c =='\n'.code || c =='\t'.code) {
-						continue;
-					}
+				} else if (line.contains('###')) {
+					// fuck
 					
-                    // if first character is some random ass character, it means we are dealing w/ an object
-                    if (!parsedAnythingYet) {
-                        parseObj();
+					if (multicommentRegex.match(line))
+						line = multicommentRegex.map(line, (reg:EReg) -> return '');
+					else {
+						// fuck
+						inMultilineComment = !inMultilineComment;
+						// continue to make sure we don't include straight ###
 						continue;
-                    }
-					invalidChar();
-			}
-			if (c != "'".code)
-				allQuote = 0;
-			if (c != "#".code)
-				commentCount = 0;
+					}
+				}
+            }
 			
-		}
-	}
-    function handleQuote(count:Int):Dynamic {
-        switch (count) {
-            case 1:
-                return parseString(true);
-            case 3: 
-                return parseString(false, true);
-            default: 
-                invalidChar();
-        }
-        return null;
-    }
-    function handleComment(count:Int) {
-        if (count <= 0)
-            invalidChar();
-        if (count < 3) {
-            ignoreLine();
-        } else {
-            var comments:Int = 0;
-            while (true) {
-                var c = nextChar();
-                if (c == "#".code) {
-                    comments++;
-                } else {
-                    comments = 0;
-                }
-                if (comments == 3) {
+			if (inMultilineComment) {
+				// trace('ignoring stinky line ' + line);
+				continue;
+			}
+            var isblankline = true;
+            for (char in line.split("")) {
+                if (!char.isSpace(0)) {
+                    isblankline = false;
                     break;
                 }
             }
-        }
-
-    }
-	function parseString(?singlequote:Bool=false, ?multiline:Bool=false) {
-		parsedAnythingYet = true;
-		var start = pos;
-		var buf:StringBuf = null;
-		#if target.unicode
-		var prev = -1;
-		inline function cancelSurrogate() {
-			// invalid high surrogate (not followed by low surrogate)
-			buf.addChar(0xFFFD);
-			prev = -1;
-		}
-		#end
-        var multicount = 0;
-		while (true) {
-			var c = nextChar();
-			if ((c == '"'.code && !singlequote && !multiline) || (c == "'".code && singlequote && !multiline))
-				break;
-            if (c == "'".code && multiline) 
-                multicount++;
-            else 
-                multicount = 0;
-            if (multiline && multicount >= 3) 
-                break; 
-			if (c == '\\'.code) {
-				if (buf == null) {
-					buf = new StringBuf();
-				}
-				buf.addSub(str, start, pos - start - 1);
-				c = nextChar();
-				#if target.unicode
-				if (c != "u".code && prev != -1)
-					cancelSurrogate();
-				#end
-				switch (c) {
-					case "r".code:
-						buf.addChar("\r".code);
-					case "n".code:
-						buf.addChar("\n".code);
-					case "t".code:
-						buf.addChar("\t".code);
-					case "b".code:
-						buf.addChar(8);
-					case "f".code:
-						buf.addChar(12);
-					case "/".code, '\\'.code, '"'.code:
-						buf.addChar(c);
-					case 'u'.code:
-						var uc:Int = Std.parseInt("0x" + str.substr(pos, 4));
-						pos += 4;
-						#if !target.unicode
-						if (uc <= 0x7F)
-							buf.addChar(uc);
-						else if (uc <= 0x7FF) {
-							buf.addChar(0xC0 | (uc >> 6));
-							buf.addChar(0x80 | (uc & 63));
-						} else if (uc <= 0xFFFF) {
-							buf.addChar(0xE0 | (uc >> 12));
-							buf.addChar(0x80 | ((uc >> 6) & 63));
-							buf.addChar(0x80 | (uc & 63));
-						} else {
-							buf.addChar(0xF0 | (uc >> 18));
-							buf.addChar(0x80 | ((uc >> 12) & 63));
-							buf.addChar(0x80 | ((uc >> 6) & 63));
-							buf.addChar(0x80 | (uc & 63));
-						}
-						#else
-						if (prev != -1) {
-							if (uc < 0xDC00 || uc > 0xDFFF)
-								cancelSurrogate();
-							else {
-								buf.addChar(((prev - 0xD800) << 10) + (uc - 0xDC00) + 0x10000);
-								prev = -1;
-							}
-						} else if (uc >= 0xD800 && uc <= 0xDBFF)
-							prev = uc;
-						else
-							buf.addChar(uc);
-						#end
-					default:
-						throw "Invalid escape sequence \\" + String.fromCharCode(c) + " at position " + (pos - 1);
-				}
-				start = pos;
-			}
-			#if !(target.unicode) // ensure utf8 chars are not cut
-			else if (c >= 0x80) {
-				pos++;
-				if (c >= 0xFC)
-					pos += 4;
-				else if (c >= 0xF8)
-					pos += 3;
-				else if (c >= 0xF0)
-					pos += 2;
-				else if (c >= 0xE0)
-					pos++;
-			}
-			#end
-		    else if (StringTools.isEof(c))
-			    throw "Unclosed string";
-		}
-		#if target.unicode
-		if (prev != -1)
-			cancelSurrogate();
-		#end
-		if (buf == null) {
-			return str.substr(start, pos - start - 1);
-		} else {
-			buf.addSub(str, start, pos - start - 1);
-			return buf.toString();
-		}
-	}
-	function parseIdentifier() {
-		parsedAnythingYet = true;
-		var start = pos;
-		var buf:StringBuf = null;
-		#if target.unicode
-		var prev = -1;
-		inline function cancelSurrogate() {
-			// invalid high surrogate (not followed by low surrogate)
-			buf.addChar(0xFFFD);
-			prev = -1;
-		}
-		#end
-		while (true) {
-			var c = nextChar();
-			if (c == '"'.code || c == ':'.code)
-				break;
-            /*
-			if (c == '\\'.code) {
-				if (buf == null) {
-					buf = new StringBuf();
-				}
-				buf.addSub(str, start, pos - start - 1);
-				c = nextChar();
-				#if target.unicode
-				if (c != "u".code && prev != -1)
-					cancelSurrogate();
-				#end
-				switch (c) {
-					case "r".code:
-						buf.addChar("\r".code);
-					case "n".code:
-						buf.addChar("\n".code);
-					case "t".code:
-						buf.addChar("\t".code);
-					case "b".code:
-						buf.addChar(8);
-					case "f".code:
-						buf.addChar(12);
-					case "/".code, '\\'.code, '"'.code:
-						buf.addChar(c);
-					case 'u'.code:
-						var uc:Int = Std.parseInt("0x" + str.substr(pos, 4));
-						pos += 4;
-						#if !target.unicode
-						if (uc <= 0x7F)
-							buf.addChar(uc);
-						else if (uc <= 0x7FF) {
-							buf.addChar(0xC0 | (uc >> 6));
-							buf.addChar(0x80 | (uc & 63));
-						} else if (uc <= 0xFFFF) {
-							buf.addChar(0xE0 | (uc >> 12));
-							buf.addChar(0x80 | ((uc >> 6) & 63));
-							buf.addChar(0x80 | (uc & 63));
-						} else {
-							buf.addChar(0xF0 | (uc >> 18));
-							buf.addChar(0x80 | ((uc >> 12) & 63));
-							buf.addChar(0x80 | ((uc >> 6) & 63));
-							buf.addChar(0x80 | (uc & 63));
-						}
-						#else
-						if (prev != -1) {
-							if (uc < 0xDC00 || uc > 0xDFFF)
-								cancelSurrogate();
-							else {
-								buf.addChar(((prev - 0xD800) << 10) + (uc - 0xDC00) + 0x10000);
-								prev = -1;
-							}
-						} else if (uc >= 0xD800 && uc <= 0xDBFF)
-							prev = uc;
-						else
-							buf.addChar(uc);
-						#end
-					default:
-						throw "Invalid escape sequence \\" + String.fromCharCode(c) + " at position " + (pos - 1);
-				}
-				start = pos;
-			}
-            
-			#if !(target.unicode) // ensure utf8 chars are not cut
-			else if (c >= 0x80) {
-				pos++;
-				if (c >= 0xFC)
-					pos += 4;
-				else if (c >= 0xF8)
-					pos += 3;
-				else if (c >= 0xF0)
-					pos += 2;
-				else if (c >= 0xE0)
-					pos++;
-			}
-			#end
-            */
-		    else if (StringTools.isEof(c))
-			    throw "Identifier has no value";
-		}
-		#if target.unicode
-		if (prev != -1)
-			cancelSurrogate();
-		#end
-		if (buf == null) {
-			return str.substr(start, pos - start - 1);
-		} else {
-			buf.addSub(str, start, pos - start - 1);
-			return buf.toString();
-		}
-	}
-	inline function parseNumber(c:Int):Dynamic {
-		parsedAnythingYet = true;
-		var start = pos - 1;
-		var minus = c == '-'.code, digit = !minus, zero = c == '0'.code;
-		var point = false, e = false, pm = false, end = false;
-		while (true) {
-			c = nextChar();
-			switch (c) {
-				case '0'.code:
-					if (zero && !point)
-						invalidNumber(start);
-					if (minus) {
-						minus = false;
-						zero = true;
+			if (line.length == 0 || isblankline)
+				continue;
+            // We don't consume indents for arrays to preserve sanity.
+			if (line.ltrim() != line && !inArray && line.trim() != "'''") {
+				// if indented, consume indent
+				// tokens.push(Indent);
+                var safeLine = line;
+				while (safeLine.isSpace(0)) {
+					if (safeLine.charAt(0) == '\t') {
+                        // fuck you a tab = space
+						thisWS++;
 					}
-					digit = true;
-				case '1'.code, '2'.code, '3'.code, '4'.code, '5'.code, '6'.code, '7'.code, '8'.code, '9'.code:
-					if (zero && !point)
-						invalidNumber(start);
-					if (minus)
-						minus = false;
-					digit = true;
-					zero = false;
-				case '.'.code:
-					if (minus || point || e)
-						invalidNumber(start);
-					digit = false;
-					point = true;
-				case 'e'.code, 'E'.code:
-					if (minus || zero || e)
-						invalidNumber(start);
-					digit = false;
-					e = true;
-				case '+'.code, '-'.code:
-					if (!e || pm)
-						invalidNumber(start);
-					digit = false;
-					pm = true;
-				default:
-					if (!digit)
-						invalidNumber(start);
-					pos--;
-					end = true;
+					if (safeLine.charAt(0) == ' ') {
+						thisWS++;
+					}
+					safeLine = safeLine.substring(1);
+				}
+                line = safeLine;
+                if (!inMultilineString) {
+					if (thisWS > previousWS) {
+						// only consume the indent if it is actually indented
+						tokens.push(Indent);
+					}
+					if (thisWS < previousWS) {
+						// This means we should have already initialized preferredWS.
+						for (i in 0...Std.int((previousWS - thisWS) / preferredWS)) {
+							// Push dedent tokens.
+							tokens.push(Dedent);
+						}
+					}
+					line = line.ltrim();
+					if (preferredWS == 0) {
+						// set preffered whitespace
+						preferredWS = thisWS;
+					} else if ((thisWS - previousWS) % preferredWS != 0) {
+						// BAD >:(
+						// This also discourages mixing tabs and spaces because who
+						// the fuck knows what they mean
+
+						throw "Mixed indentation";
+					}
+                }
+                
 			}
-			if (end)
-				break;
+			// We know for a fact this line isn't a comment now. 
+			// It could be blank tho :flushed:
+			
+			// lol nvm
+			// time for action
+            trace(inMultilineString);
+            if (!inMultilineString) {
+                // If we aren't in an array/multiline string, and this line isn't commented out/blank
+                // That must mean we are about to parse an identifier/string and a value (which could be anything)
+                // Some things MUST be parsed on the same line, i.e single line strings, numbers.
+                // Other things might not, like arrays or objects. Arrays _usually_ start inline then can go for a while. 
+                // First let's parse that dang identifier/string!
+                var splitLine = line.split("");
+                var field = "";
+                var value:Dynamic = null;
+                var arrayValue:Dynamic = null;
+                var parsingIdentifier = !inArray;
+                var pos = 0;
+                var inlineMultiline = false;
+                var stringType = 'none';
+                var throwIfCharacterFound = false;
+                while (pos < splitLine.length) {
+                    var char = splitLine[pos++];
+					switch (char) {
+                        
+						case _ if (parsingIdentifier && validCharRegex.match(char)):
+							field += char;
+						case ':' if (!inArray):
+							parsingIdentifier = false;
+                            if (field.contains('"') || field.contains("'")) {
+                                field = field.substring(1, field.length -1);
+                            }
+                            
+                            tokens.push(Identifier(field));
+							field = "";
+                            tokens.push(Colon);
+                        case ':' if (inArray): 
+                            // back the fuck up and parse the goddamn identifier
+                            trace('oop');
+                            var save = pos;
+                            while (!validCharRegex.match(splitLine[pos--])) {
+                                // do nothing
+                            }
+                            var end = pos;
+                            while (validCharRegex.match(splitLine[pos--])) {
+                                // do nothing
+                            }
+                            var id = line.substr(pos, end).ltrim();
+                            pos = save;
+                            // change to false. we are starting a :sparkles: new array
+                            
+
+                            inArray = false;
+						    // also indents : )
+                            previousWS = thisWS;
+                            tokens.push(Identifier(id));
+                            tokens.push(Colon);
+                        case '\\' if (stringType != 'none'): 
+                            char = splitLine[pos++];
+                            switch (char) {
+                                case '"':
+                                    value += '"';
+                                case '\\':
+                                    value += '\\';
+                                case "'": 
+                                    value += "'";
+                            }
+
+                        case "'": 
+                            // oop-
+                            // let's look ahead. 
+                            if (value == null) {
+								value = "";
+                                stringType = 'single';
+                            }     
+                            else {
+                                // make sure we aren't being silly
+                                if (stringType == 'double' || splitLine[pos - 1] == '\\' || stringType == 'none') {
+									if (stringType != 'none')
+										value += "'";
+                                    continue; 
+                                } 
+                                // we aren't being silly :pog:
+                                tokens.push(TString(value));
+                            }
+                                
+                            var save = pos;
+                            if (splitLine[pos++] == "'" && splitLine[pos++] == "'") {
+                                if (inlineMultiline) {
+                                    tokens.push(TString(value));
+                                }
+								var matchie = ~/'''/g;
+                                if (matchie.match(line)) {
+                                    try {
+                                        matchie.matched(2);
+                                    } catch (e:Any) {
+										trace('starting multiline');
+										multiString = line.split("'''")[1];
+										inMultilineString = true;
+                                        continue;
+                                    }
+                                    if (matchie.matched(2) != null ) {
+                                        // thank christ
+                                        // business as usual, except we ignore single quotes
+                                        inlineMultiline = true;
+                                        stringType = 'inline';
+                                        continue;
+                                    } else {
+                                        // holy shit
+                                        trace('starting multiline');
+                                        multiString = line.split("'''")[1];
+                                        inMultilineString = true;
+                                        break;
+                                    }
+                                }
+                             } else {
+                                // just a regular string
+                                pos = save;
+                                // oop 
+                                
+                             }
+                        case '"': 
+							if (value == null) {
+								value = "";
+								stringType = 'double';
+							} else {
+								// make sure we aren't being silly
+								if (stringType == 'single' || splitLine[pos - 1] == '\\' || stringType == 'none') {
+                                    if (stringType != 'none')
+                                        value += '"';
+									continue;
+								}
+								// we aren't being silly :pog:
+								tokens.push(TString(value));
+							}
+                        case _ if (stringType != 'none'): 
+                            value += char; 
+                        case _ if (stringType == 'none' && ~/[0-9\-]/.match(line)): 
+                            var numString = char;
+							while (splitLine[pos] != null && ~/[0-9.]/.match(splitLine[pos++])) {
+                                numString += splitLine[pos - 1];
+                            }
+                            tokens.push(TNumber(Std.parseFloat(numString), !numString.contains(".")));
+                        // we aren't parsing identifiers otherwise we wouldnt be here
+                        case 't' if (stringType == 'none'): 
+                             // look ahead
+                             // we can throw if it isn't correct
+                             var save = pos;
+                             if (splitLine[pos++] != 'r' || splitLine[pos++] != 'u' || splitLine[pos++] != 'e') {
+                                 throw 'Unexpected t, was expecting "true". line ${line} pos ${save}' ;
+                             } 
+                             tokens.push(TBool(true));
+						case 'f' if (stringType == 'none'):
+							// look ahead
+							// we can throw if it isn't correct
+							var save = pos;
+							if (splitLine[pos++] != 'a' || splitLine[pos++] != 'l' || splitLine[pos++] != 's' || splitLine[pos++] != 'e') {
+								throw 'Unexpected f, was expecting "false". line ${line} pos ${save}';
+							}
+							tokens.push(TBool(false));
+						case 'n' if (stringType == 'none'):
+							// look ahead
+							// we can throw if it isn't correct
+							var save = pos;
+							if (splitLine[pos++] != 'u' || splitLine[pos++] != 'l' || splitLine[pos++] != 'l') {
+								throw 'Unexpected n, was expecting "null". line ${line} pos ${save}';
+							}
+							tokens.push(TNull);
+                        case ',':
+                            // who put a comma here :angry:
+                            // this means we have to parse it like...
+                            // a regular json :scared:
+                            // we do this because commas
+                            if (arrayLevels > 0) {
+                                // oh nevermind
+								value = null;
+                            } else {
+								parsingIdentifier = true;
+								field = "";
+								value = null;
+                            }
+                            
+                        case '[': 
+                            // array :sweating:
+                            arrayLevels++;
+                            inArray = true;
+                            tokens.push(LBrace);
+
+                        case ']': 
+                            arrayLevels--;
+                            inArray = arrayLevels > 0;
+                            tokens.push(RBrace);
+                        case '\n' if (inArray):
+                            tokens.push(NewLine);
+                        
+                        case ' ', '\t': 
+                            // loop
+						default:
+                            // throw a goddamn hissy fit
+                            // throw 'invalid char ${char}';
+					}
+                }
+                // sanitycheck
+                if (line.contains("'''")) {
+                    continue;
+                }
+                
+                
+            }
+            if (inMultilineString) {
+                if (!line.contains("'''")) {
+                    multiString += line + '\n';
+                } else {
+                    trace('ending');
+                    multiString += line.split("'''")[0];
+                    inMultilineString = false;
+                    tokens.push(TString(multiString));
+                    multiString = "";
+                    justExitedMulti = true;
+                }
+            }
+            firstLine = false;
+            // Don't update indent when inArray
+            // Or we might erroneously consume Indent/Dedent tokens
+            // when it is over
+            // same deal with multiline strings
+            if (!inArray && !inMultilineString && !justExitedMulti)
+			    previousWS = thisWS;
 		}
-
-		var f = Std.parseFloat(str.substr(start, pos - start));
-		if (point) {
-			return f;
-		} else {
-			var i = Std.int(f);
-			return if (i == f) i else f;
-		}
+        return tokens;
 	}
-
-	inline function nextChar() {
-		return StringTools.fastCodeAt(str, pos++);
-	}
-    function ignoreLine() {
-        while (nextChar() != '\n'.code) {
-            
-            trace('oop');
-        }
-		
-    }
-	function invalidChar() {
-		pos--; // rewind
-		throw "Invalid char " + StringTools.fastCodeAt(str, pos) + " at position " + pos;
-	}
-
-	function invalidNumber(start:Int) {
-		throw "Invalid number at position " + start + ": " + str.substr(start, pos - start);
-	}
+    
 }
